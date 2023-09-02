@@ -15,9 +15,9 @@ Project is developed in .NET 6.0.
 Developed in Visual Studio 2022 Community.
 
 ### Classes and Interfaces
-- `IChatServer`, `IDisposable`
+- `IChatServer`, (`IDisposable`)
   -  `Server`
-- `IDisposable`
+- (`IDisposable`)
   - `Client`
 - `MessageWrapper`
 - `ClientWrapper`
