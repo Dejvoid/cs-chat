@@ -1,4 +1,4 @@
-# cs-chat –⁠⁠⁠ C# course Assignment (2023)
+# cs-chat –⁠⁠⁠ C# Course Assignment (2023)
 
 Author: David Hřivna
 
