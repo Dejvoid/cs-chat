@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Data;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -18,37 +19,18 @@ namespace cs_chat
         public void NotifyUser(MessageWrapper msg, string response, string username);
 
     }
-    public class MessageWrapper
-    {
-        public ClientWrapper Client { get; set; }
-        public byte[] Data { get; set; }
-        public const int BUFF_SIZE = 1_024;
-        public MessageWrapper(ClientWrapper client)
-        {
-            Client = client;
-            Data = new byte[BUFF_SIZE];
-        }
-    }
-    public class ClientWrapper
-    {
-        public Socket? Handler { get; set; }
-        public string? Username { get; set; }
-        public override int GetHashCode()
-        {
-            return Username.GetHashCode();
-        }
-    }
 
     public class Server : IChatServer, IDisposable
     {
         private Socket _listener;
         private IPEndPoint _endpoint;
         private Dictionary<string,ClientWrapper> _clients;
-        private Dictionary<string, List<ClientWrapper>> _groups;
+        private Dictionary<string, GroupWrapper> _groups;
         public Server(IPAddress ip, int port) {
             _endpoint = new IPEndPoint(ip, port);
             _listener = new(_endpoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
             _clients = new Dictionary<string, ClientWrapper>();
+            _groups = new Dictionary<string, GroupWrapper>();
         }
         /// <summary>
         /// Server main loop
@@ -77,6 +59,14 @@ namespace cs_chat
             var username = Encoding.UTF8.GetString(userBytes).Replace("\0", string.Empty);
             Console.WriteLine("Client " + username + " connected.");
             var client = new ClientWrapper() { Handler = handler, Username = username };
+            ServerToUser(client, "Connected to cs-chat! Welcome!");
+            while (_clients.ContainsKey(username))
+            {
+                ServerToUser(client, "Username already taken, try another one");
+                handler.Receive(userBytes);
+                username = Encoding.UTF8.GetString(userBytes).Replace("\0", string.Empty);
+                client.Username = username;
+            }
             _clients.Add(client.Username, client);
             var msg = new MessageWrapper(client);
             handler.BeginReceive(msg.Data, 0, MessageWrapper.BUFF_SIZE, SocketFlags.None, ReceiveCallback, msg);
@@ -124,14 +114,150 @@ namespace cs_chat
             else if (cmd == "gm")
             {
                 ProcessGmCommand(msg, msgText);
-       
+            }
+            else if (cmd == "group")
+            {
+                ProcessGroupCommand(msg, msgText);
             }
             else if (cmd == "help")
                 ProvideHelp(msg.Client.Handler);
             else
             {
-                msg.Client.Handler.SendAsync(Encoding.UTF8.GetBytes("Wrong command, try /help"), SocketFlags.None);
+                ServerToUser(msg.Client, "Wrong command, try /help");
             }
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="msg"></param>
+        /// <param name="msgText"></param>
+        private void ProcessGroupCommand(MessageWrapper msg, string msgText)
+        {
+            var tmp = msgText.Split(' ');
+            if (tmp.Length < 2)
+            {
+                ProvideHelp(msg.Client.Handler);
+                return;
+            }
+            var groupname = tmp[2];
+            switch (tmp[1])
+            {
+                case "create":
+                    if (!_groups.ContainsKey(groupname))
+                    {
+                        var grouptype = GroupType.PUBLIC;
+                        if (tmp.Length >= 4 && tmp[3] == "-p")
+                            grouptype = GroupType.PRIVATE;
+                        GroupCreateCmd(groupname, msg.Client, grouptype);
+                    }
+                    else
+                        ServerToUser(msg.Client, "Group " + groupname + " already exists");
+                    break;
+                case "join":
+                    if (_groups.ContainsKey(groupname))
+                        GroupJoinCmd(groupname, msg.Client);
+                    else
+                        ServerToUser(msg.Client, "Group "+groupname+" does not exist");
+                    break;
+                case "leave":
+                    if (_groups.ContainsKey(groupname))
+                        GroupLeaveCmd(groupname, msg.Client);
+                    else
+                        ServerToUser(msg.Client, "Group " + groupname + " does not exist");
+                    break;
+                case "add":
+                    if (_groups.ContainsKey(groupname))
+                        if (tmp.Length >= 4)
+                        {
+                            var username = tmp[3];
+                            GroupAddCmd(groupname, username, msg.Client);
+                        }
+                        else
+                            ProvideHelp(msg.Client.Handler);
+                    else
+                        ServerToUser(msg.Client, "Group " + groupname + " does not exist");
+                    break;
+                case "promote":
+                    if (_groups.ContainsKey(groupname))
+                        if (tmp.Length >= 4)
+                        {
+                            var username = tmp[3];
+                            GroupPromote(groupname, username, msg.Client);
+                        }
+                        else
+                            ProvideHelp(msg.Client.Handler);
+                    else
+                        ServerToUser(msg.Client, "Group " + groupname + " does not exist");
+                    break;
+                case "kick":
+                    if (_groups.ContainsKey(groupname))
+                        if (tmp.Length >= 4)
+                        {
+                            var username = tmp[3];
+                            GroupKick(groupname, username, msg.Client);
+                        }
+                        else
+                            ProvideHelp(msg.Client.Handler);
+                    else
+                        ServerToUser(msg.Client, "Group " + groupname + " does not exist");
+                    break;
+                default:
+                    ProvideHelp(msg.Client.Handler);
+                    break;
+            }
+        }
+
+        private void GroupKick(string groupname, string username, ClientWrapper admin)
+        {
+            var group = _groups[groupname];
+            if (group.HasAdmin(admin))
+                group.Remove(username);
+            else
+                ServerToUser(admin, "You have no admin rights in this group");
+        }
+
+        private void GroupPromote(string groupname, string username, ClientWrapper admin)
+        {
+            var group = _groups[groupname];
+            if (group.HasAdmin(admin))
+                group.Promote(username);
+            else
+                ServerToUser(admin, "You have no admin rights in this group");
+        }  
+
+        private void GroupAddCmd(string groupname, string username, ClientWrapper client)
+        {
+            var group = _groups[groupname];
+            if (group.Type == GroupType.PUBLIC || group.HasAdmin(client))
+                _groups[groupname].Add(_clients[username]);
+            else
+                ServerToUser(client, "You have no rights to add people to this group");
+        }
+
+        private void GroupLeaveCmd(string groupname, ClientWrapper client)
+        {
+            _groups[groupname].Remove(client.Username);
+        }
+
+        private void GroupJoinCmd(string groupname, ClientWrapper client)
+        {
+            GroupWrapper group = _groups[groupname];
+            if (group.Type == GroupType.PUBLIC)
+                _groups[groupname].Add(client);
+            else
+                ServerToUser(client, "This group is private, ask admin of the group");
+        }
+
+        private void ServerToUser(ClientWrapper client, string msg)
+        {
+            client.Handler.SendAsync(Encoding.UTF8.GetBytes(msg), SocketFlags.None);
+        }
+
+        private void GroupCreateCmd(string groupname, ClientWrapper client, GroupType type = GroupType.PUBLIC)
+        {
+            GroupWrapper group = new GroupWrapper(groupname, client);
+            _groups.Add(groupname, group);
         }
 
         /// <summary>
@@ -186,8 +312,9 @@ namespace cs_chat
         public void NotifyAll(MessageWrapper msg, string msgText)
         {
             foreach (var client in _clients)
-            { 
-                client.Value.Handler.SendAsync(Encoding.UTF8.GetBytes(msg.Client.Username + ": " + msgText), SocketFlags.None);
+            {
+                ServerToUser(client.Value, msg.Client.Username + ": " + msgText);
+                //client.Value.Handler.SendAsync(Encoding.UTF8.GetBytes(msg.Client.Username + ": " + msgText), SocketFlags.None);
             }
         }
         
@@ -201,7 +328,7 @@ namespace cs_chat
         {
             foreach (var client in _groups[groupName])
             {
-                client.Handler.SendAsync(Encoding.UTF8.GetBytes(msg.Client.Username + "(" + groupName + "): " + msgText), SocketFlags.None);
+                ServerToUser(client, msg.Client.Username + "(" + groupName + "): " + msgText);
             }
         }
         
@@ -214,7 +341,7 @@ namespace cs_chat
         public void NotifyUser(MessageWrapper msg, string msgText, string username)
         {
             if (_clients.ContainsKey(username))
-                _clients[username].Handler.SendAsync(Encoding.UTF8.GetBytes(msg.Client.Username + "(private): " + msgText),SocketFlags.None);
+                ServerToUser(_clients[username], msg.Client.Username + "(private): " + msgText);
         }
         
         public void Dispose()

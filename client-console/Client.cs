@@ -65,14 +65,10 @@ namespace client_console
                     Console.WriteLine(response);
                 }
             }
-            catch (SocketException ex)
+            catch (SocketException)
             {
                 //await Console.Out.WriteLineAsync(ex.ToString());
                 await Console.Out.WriteLineAsync("> Lost connection to the server");
-            }
-            catch (Exception ex)
-            {
-                throw;
             }
         }
         /// <summary>
@@ -87,13 +83,9 @@ namespace client_console
                 var messageBytes = Encoding.UTF8.GetBytes(msg);
                 _ = await _socket.SendAsync(messageBytes, SocketFlags.None);
             }
-            catch (System.Net.Sockets.SocketException ex)
+            catch (SocketException)
             {
                 await Console.Out.WriteLineAsync("> Couldn't send the message");
-            }
-            catch (Exception e)
-            {
-                throw e;
             }
         }
     }
